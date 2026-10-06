@@ -27,7 +27,7 @@ button { cursor: pointer; }
   background: #fff;
   box-shadow: 1px 0 5px #0002;
 }
-.search-header { min-height: 103px; padding: 9px 9px 8px; background: var(--cyan); }
+.search-header { position: relative; z-index: 4; min-height: 103px; padding: 9px 9px 8px; background: var(--cyan); }
 .search-form { position: relative; display: flex; align-items: center; gap: 7px; height: 38px; }
 .search-icon {
   position: relative;
@@ -47,6 +47,18 @@ button { cursor: pointer; }
   border: 0; border-radius: 0; outline: none; color: #333; background: white; font-size: 12px;
 }
 #address-input::-webkit-search-cancel-button { display: none; }
+.search-suggestions {
+  position: absolute; top: 40px; right: 43px; left: 38px; z-index: 10;
+  max-height: 280px; overflow-y: auto; border: 1px solid #bbb; background: white;
+  box-shadow: 0 3px 8px #0003;
+}
+.search-suggestion {
+  display: block; width: 100%; padding: 9px 11px; border: 0; border-bottom: 1px solid #e5e5e5;
+  color: #333; background: white; text-align: left; font-size: 13px; line-height: 1.35;
+}
+.search-suggestion:last-child { border-bottom: 0; }
+.search-suggestion:hover, .search-suggestion.active { background: #eaf8fb; }
+.search-suggestion small { display: block; margin-top: 2px; color: #666; font-size: 11px; }
 .clear-search, .reset-search {
   width: 28px; height: 32px; padding: 0; border: 0; color: white; background: transparent; font-size: 25px;
 }
