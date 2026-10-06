@@ -16,9 +16,10 @@
         <header class="search-header">
           <form class="search-form" id="search-form">
             <span class="search-icon" aria-hidden="true"></span>
-            <input id="address-input" type="search" placeholder="Search by suburb, postcode, or site name" autocomplete="off" aria-label="Search by address">
+            <input id="address-input" type="search" placeholder="Search by suburb, postcode, or site name" autocomplete="off" aria-label="Search by suburb, postcode, or site name" aria-autocomplete="list" aria-controls="search-suggestions" aria-expanded="false">
             <button class="clear-search" id="clear-search" type="button" aria-label="Clear search">×</button>
             <button class="reset-search" id="reset-search" type="button" aria-label="Reset search">↻</button>
+            <div class="search-suggestions" id="search-suggestions" role="listbox" aria-label="Search suggestions" hidden></div>
           </form>
           <label class="radius-control" for="radius-select">
             <strong>Search Radius:</strong>

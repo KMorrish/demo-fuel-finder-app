@@ -1,6 +1,6 @@
 import WebMap from "https://js.arcgis.com/4.32/@arcgis/core/WebMap.js";
 import MapView from "https://js.arcgis.com/4.32/@arcgis/core/views/MapView.js";
-import { addressToLocations } from "https://js.arcgis.com/4.32/@arcgis/core/rest/locator.js";
+import { addressToLocations, suggestLocations } from "https://js.arcgis.com/4.32/@arcgis/core/rest/locator.js";
 import Graphic from "https://js.arcgis.com/4.32/@arcgis/core/Graphic.js";
 import * as geometryEngine from "https://js.arcgis.com/4.32/@arcgis/core/geometry/geometryEngine.js";
 
@@ -21,6 +21,7 @@ import * as geometryEngine from "https://js.arcgis.com/4.32/@arcgis/core/geometr
       radius: document.getElementById("radius-select"),
       clear: document.getElementById("clear-search"),
       reset: document.getElementById("reset-search"),
+      suggestions: document.getElementById("search-suggestions"),
       message: document.getElementById("search-message"),
       error: document.getElementById("app-error"),
       results: document.getElementById("results-list"),
@@ -49,6 +50,10 @@ import * as geometryEngine from "https://js.arcgis.com/4.32/@arcgis/core/geometr
     let activeProductCategory = "fuel";
     let currentLocation = null;
     let currentResults = [];
+    let suggestionTimer = null;
+    let suggestionRequest = 0;
+    let activeSuggestion = -1;
+    let searchSuggestions = [];
 
     function showError(message) {
       elements.error.textContent = message;
@@ -57,6 +62,177 @@ import * as geometryEngine from "https://js.arcgis.com/4.32/@arcgis/core/geometr
 
     function setMessage(message) {
       elements.message.textContent = message;
+    }
+
+    function closeSuggestions() {
+      elements.suggestions.hidden = true;
+      elements.address.setAttribute("aria-expanded", "false");
+      elements.address.removeAttribute("aria-activedescendant");
+      activeSuggestion = -1;
+    }
+
+    function renderSuggestions(suggestions) {
+      searchSuggestions = suggestions;
+      activeSuggestion = -1;
+      elements.suggestions.replaceChildren();
+      for (const [index, suggestion] of suggestions.entries()) {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.id = `search-suggestion-${index}`;
+        option.className = "search-suggestion";
+        option.setAttribute("role", "option");
+        option.setAttribute("aria-selected", "false");
+        option.append(document.createTextNode(suggestion.label));
+        const kind = document.createElement("small");
+        kind.textContent = suggestion.kind === "site" ? "Fuel site" : "Suburb or address";
+        option.append(kind);
+        option.addEventListener("mousedown", (event) => event.preventDefault());
+        option.addEventListener("click", () => selectSuggestion(index));
+        elements.suggestions.append(option);
+      }
+      elements.suggestions.hidden = suggestions.length === 0;
+      elements.address.setAttribute("aria-expanded", String(suggestions.length > 0));
+    }
+
+    function setActiveSuggestion(index) {
+      if (!searchSuggestions.length) return;
+      activeSuggestion = (index + searchSuggestions.length) % searchSuggestions.length;
+      for (const [optionIndex, option] of Array.from(elements.suggestions.children).entries()) {
+        const active = optionIndex === activeSuggestion;
+        option.classList.toggle("active", active);
+        option.setAttribute("aria-selected", String(active));
+      }
+      elements.address.setAttribute("aria-activedescendant", `search-suggestion-${activeSuggestion}`);
+      elements.suggestions.children[activeSuggestion].scrollIntoView({ block: "nearest" });
+    }
+
+    async function findSiteSuggestions(text) {
+      const clausesByLayer = layers.map((layer) => {
+        const fields = identifySiteFields(layer);
+        const searchable = [fields.name, fields.address, fields.suburb, fields.postcode].filter(Boolean);
+        const terms = [];
+        const value = text.replace(/[%_]/g, "").replace(/'/g, "''");
+        if (!value) return { layer, where: "" };
+        for (const field of searchable) {
+          if (field.type === "string") {
+            terms.push(`${field.name} LIKE '%${value}%'`);
+          } else if (field === fields.postcode && /^\d{1,4}$/.test(text)) {
+            const postcodePrefix = Number(text);
+            const rangeSize = 10 ** (4 - text.length);
+            terms.push(`(${field.name} >= ${postcodePrefix * rangeSize} AND ${field.name} <= ${(postcodePrefix + 1) * rangeSize - 1})`);
+          }
+        }
+        return { layer, where: terms.length ? terms.join(" OR ") : "" };
+      }).filter((entry) => entry.where);
+      const queried = await Promise.all(clausesByLayer.map(async ({ layer, where }) => {
+        const query = layer.createQuery();
+        query.where = where;
+        query.outFields = ["*"];
+        query.returnGeometry = true;
+        query.num = 8;
+        const result = await layer.queryFeatures(query);
+        for (const feature of result.features) featureLayers.set(feature, layer.id);
+        return result.features;
+      }));
+      const seen = new Set();
+      return queried.flat().flatMap((feature) => {
+        const name = siteName(feature);
+        const address = siteAddress(feature);
+        const key = `${name}|${address}`.toLowerCase();
+        if (seen.has(key)) return [];
+        seen.add(key);
+        return [{
+          kind: "site",
+          label: [name, address].filter(Boolean).join(" — "),
+          feature
+        }];
+      }).slice(0, 6);
+    }
+
+    async function findExactSite(text) {
+      const value = text.replace(/'/g, "''");
+      const queries = layers.flatMap((layer) => {
+        const name = identifySiteFields(layer).name;
+        if (!name || name.type !== "string") return [];
+        return [async () => {
+          const query = layer.createQuery();
+          query.where = `${name.name} = '${value}'`;
+          query.outFields = ["*"];
+          query.returnGeometry = true;
+          query.num = 1;
+          const result = await layer.queryFeatures(query);
+          for (const feature of result.features) featureLayers.set(feature, layer.id);
+          return result.features[0] || null;
+        }];
+      });
+      const matches = await Promise.all(queries.map((query) => query()));
+      return matches.find(Boolean) || null;
+    }
+
+    async function updateSuggestions(text) {
+      const request = ++suggestionRequest;
+      const normalized = text.trim();
+      if (normalized.length < 2) {
+        closeSuggestions();
+        return;
+      }
+      const [locations, sites] = await Promise.allSettled([
+        suggestLocations(GEOCODER_URL, {
+          text: normalized,
+          countryCode: "AUS",
+          maxSuggestions: 5
+        }),
+        findSiteSuggestions(normalized)
+      ]);
+      if (request !== suggestionRequest || elements.address.value.trim() !== normalized) return;
+      const failures = [locations, sites].filter((result) => result.status === "rejected");
+      if (locations.status === "rejected") console.error("Location autocomplete failed", locations.reason);
+      if (sites.status === "rejected") console.error("Site autocomplete failed", sites.reason);
+      const locationSuggestions = locations.status === "fulfilled"
+        ? locations.value.slice(0, 4).map((item) => ({ kind: "location", label: item.text, magicKey: item.magicKey }))
+        : [];
+      const siteSuggestions = sites.status === "fulfilled" ? sites.value.slice(0, 4) : [];
+      renderSuggestions([...siteSuggestions, ...locationSuggestions].slice(0, 8));
+      if (failures.length === 2) {
+        showError("Search suggestions are unavailable. You can still submit a search.");
+      } else {
+        elements.error.hidden = true;
+      }
+    }
+
+    function selectSuggestion(index) {
+      const suggestion = searchSuggestions[index];
+      if (!suggestion) return;
+      closeSuggestions();
+      elements.address.value = suggestion.label;
+      if (suggestion.kind === "site") {
+        searchSite(suggestion.feature);
+      } else {
+        searchAddress(suggestion.label, suggestion.magicKey);
+      }
+    }
+
+    async function searchSite(feature) {
+      if (!feature.geometry) {
+        setMessage("This site has no location available.");
+        return;
+      }
+      try {
+        elements.error.hidden = true;
+        currentLocation = feature.geometry;
+        featureDistances.set(feature, 0);
+        view.graphics.removeAll();
+        view.graphics.add(new Graphic({
+          geometry: currentLocation,
+          symbol: { type: "simple-marker", style: "circle", color: "#ffcf21", size: 17, outline: { color: "#fff", width: 2 } }
+        }));
+        await view.goTo({ target: currentLocation, zoom: elements.radius.value ? 9 : 12 });
+        await refreshResults();
+      } catch (error) {
+        console.error("Site search failed", error);
+        setMessage("Could not open that site location.");
+        showError(`Site search failed: ${error.message || error}`);
+      }
     }
 
     function getValue(attributes, field) {
@@ -464,14 +640,25 @@ import * as geometryEngine from "https://js.arcgis.com/4.32/@arcgis/core/geometr
       }
     }
 
-    async function searchAddress(address) {
+    async function searchAddress(address, magicKey) {
       const text = address.trim();
       if (!text) return;
+      closeSuggestions();
       setMessage("Finding address…");
       elements.error.hidden = true;
       try {
+        try {
+          const exactSite = await findExactSite(text);
+          if (exactSite) {
+            await searchSite(exactSite);
+            return;
+          }
+        } catch (error) {
+          console.error("Site name search failed", error);
+        }
         const matches = await addressToLocations(GEOCODER_URL, {
           address: { SingleLine: text },
+          magicKey,
           outFields: ["*"],
           maxLocations: 5,
           countryCode: "AUS"
@@ -579,6 +766,7 @@ import * as geometryEngine from "https://js.arcgis.com/4.32/@arcgis/core/geometr
         }
         classifyFields();
         setMessage(`${filterFields.products.length} product fields and ${filterFields.services.length} service fields loaded`);
+        if (elements.address.value.trim().length >= 2) updateSuggestions(elements.address.value);
       } catch (error) {
         console.error("Web map initialization failed", error);
         showError(`Could not load the fuel locator web map. ${error.message || error}`);
@@ -588,14 +776,37 @@ import * as geometryEngine from "https://js.arcgis.com/4.32/@arcgis/core/geometr
 
     elements.form.addEventListener("submit", (event) => {
       event.preventDefault();
-      searchAddress(elements.address.value);
+      if (!elements.suggestions.hidden && activeSuggestion >= 0) {
+        selectSuggestion(activeSuggestion);
+      } else {
+        closeSuggestions();
+        searchAddress(elements.address.value);
+      }
     });
+    elements.address.addEventListener("input", () => {
+      window.clearTimeout(suggestionTimer);
+      suggestionTimer = window.setTimeout(() => updateSuggestions(elements.address.value), 250);
+    });
+    elements.address.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" && !elements.suggestions.hidden) {
+        event.preventDefault();
+        setActiveSuggestion(activeSuggestion + 1);
+      } else if (event.key === "ArrowUp" && !elements.suggestions.hidden) {
+        event.preventDefault();
+        setActiveSuggestion(activeSuggestion < 0 ? searchSuggestions.length - 1 : activeSuggestion - 1);
+      } else if (event.key === "Escape") {
+        closeSuggestions();
+      }
+    });
+    elements.address.addEventListener("blur", () => window.setTimeout(closeSuggestions, 120));
     elements.clear.addEventListener("click", () => {
       elements.address.value = "";
+      closeSuggestions();
       elements.address.focus();
     });
     elements.reset.addEventListener("click", () => {
       elements.address.value = "";
+      closeSuggestions();
       elements.radius.value = "";
       currentLocation = null;
       currentResults = [];
