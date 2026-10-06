@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#18b5d3">
+    <title>Fuel locator</title>
+    <link rel="stylesheet" href="https://js.arcgis.com/4.32/esri/themes/light/main.css">
+    <link rel="stylesheet" href="./styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="Fuel locator">
+        <header class="search-header">
+          <form class="search-form" id="search-form">
+            <span class="search-icon" aria-hidden="true"></span>
+            <input id="address-input" type="search" placeholder="Search by suburb, postcode, or site name" autocomplete="off" aria-label="Search by address">
+            <button class="clear-search" id="clear-search" type="button" aria-label="Clear search">×</button>
+            <button class="reset-search" id="reset-search" type="button" aria-label="Reset search">↻</button>
+          </form>
+          <label class="radius-control" for="radius-select">
+            <strong>Search Radius:</strong>
+            <select id="radius-select" aria-label="Search radius">
+              <option value="">None</option>
+              <option value="5">5 km</option>
+              <option value="10">10 km</option>
+              <option value="20">20 km</option>
+              <option value="50">50 km</option>
+            </select>
+          </label>
+          <div class="search-message" id="search-message" role="status" aria-live="polite"></div>
+        </header>
+
+        <nav class="view-tabs" aria-label="Locator views">
+          <button class="view-tab active" type="button" data-view="filters" aria-label="Filters" title="Filters">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z"/></svg>
+          </button>
+          <button class="view-tab" type="button" data-view="results" aria-label="Results" title="Results">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11M9 12h11M9 19h11M4 5h1v1H4zM4 12h1v1H4zM4 19h1v1H4z"/></svg>
+            <span class="result-count" id="result-count"></span>
+          </button>
+          <button class="view-tab" type="button" data-view="map" aria-label="Map" title="Map">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7M14 7h7M3 17h3m4 0h11M10 4l4 3-4 3m4 4-4 3 4 3"/></svg>
+          </button>
+          <button class="export-button" id="export-button" type="button" aria-label="Export results as PDF" title="Export results as PDF">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h5M8 15h8M8 18h8M8 12h3"/></svg>
+          </button>
+        </nav>
+
+        <section class="locator-content">
+          <div class="category-tabs" aria-label="Fuel category">
+            <button type="button" class="category-tab active" data-category="fuel">Fuel</button>
+            <button type="button" class="category-tab" data-category="lubricants">Lubricants</button>
+            <button type="button" class="category-tab" data-category="truck">Truck Friendly</button>
+          </div>
+
+          <section class="panel-view active" id="filters-view" aria-label="Filter sites">
+            <div class="filter-heading" id="product-heading"><em>Products</em></div>
+            <div class="filter-options" id="product-filter-options">
+              <label class="match-toggle"><input id="products-match-all" type="checkbox" checked><span class="toggle-track"></span><em>Show if have all selected criteria</em></label>
+              <div id="product-filters" class="checkbox-grid"></div>
+              <p class="empty-fields" id="product-empty" hidden>No product fields were found in the map layer.</p>
+            </div>
+            <div class="filter-heading" id="service-heading"><em>Services &amp; Amenities</em></div>
+            <div class="filter-options">
+              <label class="match-toggle"><input id="services-match-all" type="checkbox" checked><span class="toggle-track"></span><em>Show if have all selected criteria</em></label>
+              <div id="service-filters" class="checkbox-grid single-column"></div>
+              <p class="empty-fields" id="service-empty" hidden>No service or amenity fields were found in the map layer.</p>
+            </div>
+          </section>
+
+          <section class="panel-view results-view" id="results-view" aria-label="Search results">
+            <div class="results-summary" id="results-summary">Search for an address to find nearby sites.</div>
+            <div class="results-list" id="results-list"></div>
+          </section>
+
+          <section class="panel-view detail-view" id="detail-view" aria-label="Site details">
+            <button id="back-button" class="back-button" type="button"><span aria-hidden="true">‹</span> Back to results</button>
+            <div id="site-detail"></div>
+          </section>
+
+          <section class="panel-view map-hint" id="map-view" aria-label="Map controls">
+            <p>Choose a location above to search for nearby fuel sites.</p>
+            <button id="show-map-button" type="button" class="primary-button">Show map</button>
+          </section>
+        </section>
+      </aside>
+      <section class="map-region" aria-label="Map">
+        <div id="map-view-container"></div>
+        <div id="app-error" class="app-error" role="alert" hidden></div>
+        <button id="mobile-map-button" class="mobile-map-button" type="button">Map</button>
+      </section>
+    </main>
+  </body>
+</html>
